@@ -20,6 +20,7 @@ import {
   utils,
 } from 'cc';
 import { RaceHud } from './RaceHud';
+import { WorldBend } from './WorldBend';
 
 const GRID = 62;
 const ROAD_W = 12;
@@ -158,6 +159,7 @@ export class RaceGame {
   private camInited = false;
   private pickupSpin = 0;
   private glassMat: Material | null = null;
+  private worldBend = new WorldBend();
 
   static create(scene: Scene): RaceGame {
     const g = new RaceGame(scene);
@@ -193,6 +195,7 @@ export class RaceGame {
       this.mainCam.clearColor = new Color(185, 216, 239, 255);
       this.mainCam.far = 650;
     }
+    this.worldBend.attach(this.mainCam);
 
     const canvas = this.scene.getChildByName('Canvas');
     if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun());
@@ -749,11 +752,13 @@ export class RaceGame {
   tick(dt: number): void {
     if (!this.player) {
       this.updateCamera(0.08);
+      this.syncBend();
       return;
     }
     if (this.mode !== 'play') {
       this.advanceView(dt);
       this.updateCamera(0.08);
+      this.syncBend();
       return;
     }
     this.speed = Math.min(28, 16 + this.dist * 0.01);
@@ -847,7 +852,14 @@ export class RaceGame {
     this.advanceView(dt);
     const camBusy = !!(this.playerTurn || this.camHold > 0 || this.viewT < 1);
     this.updateCamera(camBusy ? 0.28 : 0.14);
+    this.syncBend();
     this.recycle();
+  }
+
+  private syncBend(): void {
+    this.worldBend.capture(this.world);
+    this.worldBend.capture(this.actors);
+    this.worldBend.sync();
   }
 
   private spawnTraffic(): void {

@@ -1,0 +1,110 @@
+CCEffect %{
+  techniques:
+  - name: opaque
+    passes:
+    - vert: bend-vs:vert
+      frag: bend-fs:frag
+      properties: &props
+        mainColor:     { value: [1.0, 1.0, 1.0, 1.0], editor: { type: color } }
+        mainTexture:   { value: white }
+        tilingOffset:  { value: [1.0, 1.0, 0.0, 0.0] }
+        bendParams:    { value: [0.0, 0.0, 0.0, 130.0] }
+      depthStencilState:
+        depthTest: true
+        depthWrite: true
+      rasterizerState:
+        cullMode: back
+  - name: glass
+    passes:
+    - vert: bend-vs:vert
+      frag: bend-fs:frag
+      properties: *props
+      depthStencilState:
+        depthTest: true
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+          blendSrcAlpha: one
+          blendDstAlpha: one_minus_src_alpha
+      rasterizerState:
+        cullMode: none
+}%
+
+CCProgram bend-vs %{
+  precision highp float;
+  #include <legacy/input-standard>
+  #include <builtin/uniforms/cc-global>
+  #include <legacy/decode-base>
+  #include <legacy/local-batch>
+
+  uniform Constant {
+    vec4 mainColor;
+    vec4 tilingOffset;
+    vec4 bendParams;
+  };
+
+  out vec2 v_uv;
+  out vec3 v_normal;
+
+  vec3 applySphereBend(vec3 worldPos) {
+    vec3 cam = bendParams.xyz;
+    float r = max(bendParams.w, 8.0);
+    vec2 d = worldPos.xz - cam.xz;
+    float dist = length(d);
+    float theta = dist / r;
+    if (dist > 0.0001) {
+      vec2 dir = d / dist;
+      worldPos.xz = cam.xz + dir * (r * sin(theta));
+    }
+    worldPos.y -= r * (1.0 - cos(theta));
+    return worldPos;
+  }
+
+  vec4 vert () {
+    StandardVertInput In;
+    CCVertInput(In);
+
+    mat4 matWorld, matWorldIT;
+    CCGetWorldMatrixFull(matWorld, matWorldIT);
+
+    vec4 worldPos = matWorld * In.position;
+    worldPos.xyz = applySphereBend(worldPos.xyz);
+    v_uv = a_texCoord * tilingOffset.xy + tilingOffset.zw;
+    v_normal = normalize((matWorldIT * vec4(In.normal, 0.0)).xyz);
+    return cc_matViewProj * worldPos;
+  }
+}%
+
+CCProgram bend-fs %{
+  precision highp float;
+  #include <legacy/output>
+  #include <builtin/uniforms/cc-global>
+
+  in vec2 v_uv;
+  in vec3 v_normal;
+
+  uniform Constant {
+    vec4 mainColor;
+    vec4 tilingOffset;
+    vec4 bendParams;
+  };
+
+#if USE_TEXTURE
+  uniform sampler2D mainTexture;
+#endif
+
+  vec4 frag () {
+    vec4 o = mainColor;
+#if USE_TEXTURE
+    o *= texture(mainTexture, v_uv);
+#endif
+    vec3 N = normalize(v_normal);
+    vec3 L = normalize(vec3(0.35, 0.82, 0.45));
+    float wrap = clamp(dot(N, L) * 0.55 + 0.45, 0.35, 1.0);
+    o.rgb *= wrap;
+    return CCFragOutput(o);
+  }
+}%
