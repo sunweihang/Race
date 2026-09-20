@@ -198,7 +198,7 @@ export class RaceGame {
     this.worldBend.attach(this.mainCam);
 
     const canvas = this.scene.getChildByName('Canvas');
-    if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun());
+    if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun(), () => this.toggleBend());
 
     const names = ['map_L0', 'map_L1', ...BLOCKS, 'car_player', 'car_robber', ...CARS, 'sky'];
     await Promise.all([...names.map((n) => this.loadPrefab(n)), this.loadSkyTexture()]);
@@ -538,12 +538,24 @@ export class RaceGame {
   };
 
   private onKey = (e: EventKeyboard): void => {
+    if (e.keyCode === KeyCode.KEY_G) {
+      this.hud?.toggleGm();
+      return;
+    }
+    if (this.hud?.gmOpen) return;
     if (e.keyCode === KeyCode.ARROW_LEFT || e.keyCode === KeyCode.KEY_A) this.swipe(-80, 0);
     if (e.keyCode === KeyCode.ARROW_RIGHT || e.keyCode === KeyCode.KEY_D) this.swipe(80, 0);
     if (e.keyCode === KeyCode.ARROW_UP || e.keyCode === KeyCode.KEY_W) this.swipe(0, 80);
   };
 
+  private toggleBend(): void {
+    this.worldBend.setEnabled(!this.worldBend.enabled);
+    this.hud?.setBendOn(this.worldBend.enabled);
+    if (this.worldBend.enabled) this.syncBend();
+  }
+
   private swipe(dx: number, dy: number): void {
+    if (this.hud?.gmOpen) return;
     if (this.mode !== 'play') return;
     if (Math.abs(dx) < 24 && Math.abs(dy) < 24) return;
     const turning = !!this.playerTurn;

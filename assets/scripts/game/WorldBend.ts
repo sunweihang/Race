@@ -4,11 +4,12 @@ const SKIP = /^(sky|Hud|Canvas|LetterboxCam)$/i;
 const GLASS = /glass|car00b/i;
 
 export class WorldBend {
+  enabled = false;
   radius = 130;
   private camera: Camera | null = null;
   private effect: EffectAsset | null = null;
   private mats: Material[] = [];
-  private patched = new WeakSet<MeshRenderer>();
+  private saved = new Map<MeshRenderer, (Material | null)[]>();
   private params = new Vec4();
 
   attach(camera: Camera | null): void {
@@ -22,13 +23,20 @@ export class WorldBend {
     });
   }
 
+  setEnabled(on: boolean): void {
+    if (this.enabled === on) return;
+    this.enabled = on;
+    if (!on) this.release();
+  }
+
   capture(root: Node | null): void {
-    if (!this.effect || !root?.isValid) return;
+    if (!this.enabled || !this.effect || !root?.isValid) return;
     const list = root.getComponentsInChildren(MeshRenderer);
     for (let i = 0; i < list.length; i++) this.patch(list[i]);
   }
 
   sync(): void {
+    if (!this.enabled) return;
     const cam = this.camera?.node;
     if (!cam?.isValid || this.mats.length === 0) return;
     const p = cam.worldPosition;
@@ -43,11 +51,23 @@ export class WorldBend {
     }
   }
 
+  release(): void {
+    for (const [mr, mats] of this.saved) {
+      if (!mr?.isValid) continue;
+      for (let i = 0; i < mats.length; i++) mr.setMaterial(mats[i], i);
+    }
+    this.saved.clear();
+    this.mats.length = 0;
+  }
+
   private patch(mr: MeshRenderer): void {
-    if (!this.effect || !mr?.isValid || this.patched.has(mr)) return;
+    if (!this.effect || !mr?.isValid || this.saved.has(mr)) return;
     if (this.shouldSkip(mr.node)) return;
     const shared = mr.sharedMaterials || [];
     const count = Math.max(shared.length, 1);
+    const backup: (Material | null)[] = [];
+    for (let i = 0; i < count; i++) backup.push(mr.getSharedMaterial(i) ?? mr.material ?? null);
+    this.saved.set(mr, backup);
     for (let i = 0; i < count; i++) {
       const src = shared[i] ?? mr.getSharedMaterial(i) ?? mr.material;
       const glass = this.isGlass(mr, src);
@@ -69,7 +89,6 @@ export class WorldBend {
       mr.setMaterial(mat, i);
       this.mats.push(mat);
     }
-    this.patched.add(mr);
   }
 
   private isGlass(mr: MeshRenderer, src: Material | null): boolean {

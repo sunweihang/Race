@@ -40,8 +40,12 @@ export class RaceHud {
   coverTitle: Label;
   coverBody: Label;
   playBtn: Button;
+  gm: Node;
+  private bendBtn: Node;
+  private bendLabel: Label;
+  private bendGfx: Graphics;
 
-  constructor(canvas: Node, onPlay: () => void) {
+  constructor(canvas: Node, onPlay: () => void, onToggleBend: () => void) {
     this.root = new Node('Hud');
     ui(this.root);
     canvas.addChild(this.root);
@@ -97,10 +101,55 @@ export class RaceHud {
     this.playBtn = btnNode.addComponent(Button);
     btnNode.on(Button.EventType.CLICK, onPlay, this);
 
+    this.gm = new Node('Gm');
+    ui(this.gm);
+    this.root.addChild(this.gm);
+    const gmUt = this.gm.addComponent(UITransform);
+    gmUt.setContentSize(DESIGN_W, DESIGN_H);
+    const gmDim = this.gm.addComponent(Graphics);
+    gmDim.fillColor = new Color(12, 16, 28, 200);
+    gmDim.rect(-DESIGN_W * 0.5, -DESIGN_H * 0.5, DESIGN_W, DESIGN_H);
+    gmDim.fill();
+    const gmTitle = label(this.gm, 'GmTitle', 56, new Color(244, 239, 228, 255));
+    gmTitle.string = 'GM';
+    gmTitle.node.setPosition(0, 280, 0);
+    const gmHint = label(this.gm, 'GmHint', 26, new Color(196, 204, 216, 255));
+    gmHint.string = '按 G 关闭';
+    gmHint.node.setPosition(0, 200, 0);
+
+    this.bendBtn = new Node('BendToggle');
+    ui(this.bendBtn);
+    this.gm.addChild(this.bendBtn);
+    this.bendBtn.setPosition(0, 40, 0);
+    this.bendBtn.addComponent(UITransform).setContentSize(420, 96);
+    this.bendGfx = this.bendBtn.addComponent(Graphics);
+    this.bendLabel = label(this.bendBtn, 'BendLabel', 34, new Color(244, 239, 228, 255));
+    this.bendBtn.addComponent(Button);
+    this.bendBtn.on(Button.EventType.CLICK, onToggleBend, this);
+    this.setBendOn(false);
+    this.gm.active = false;
+
     this.showCover('试试赛车', '左右滑：换道 / 路口转弯\n吃金币、躲车', '开始追捕');
     this.setStats(0, 0, 3);
     this.setHint('');
     this.setWarn('');
+  }
+
+  get gmOpen(): boolean {
+    return !!this.gm?.active;
+  }
+
+  toggleGm(): void {
+    this.gm.active = !this.gm.active;
+  }
+
+  setBendOn(on: boolean): void {
+    this.bendLabel.string = on ? '求面视角  开' : '求面视角  关';
+    this.bendLabel.color = on ? new Color(26, 35, 51, 255) : new Color(244, 239, 228, 255);
+    this.bendGfx.clear();
+    this.bendGfx.fillColor = on ? new Color(240, 193, 75, 255) : new Color(90, 100, 118, 255);
+    this.bendGfx.roundRect(-210, -48, 420, 96, 14);
+    this.bendGfx.fill();
   }
 
   layout(): void {
