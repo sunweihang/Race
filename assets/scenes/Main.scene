@@ -67,7 +67,7 @@
     "_orthoHeight": 10,
     "_near": 0.1,
     "_far": 650,
-    "_color": { "__type__": "cc.Color", "r": 185, "g": 216, "b": 239, "a": 255 },
+    "_color": { "__type__": "cc.Color", "r": 90, "g": 200, "b": 255, "a": 255 },
     "_depth": 1,
     "_stencil": 0,
     "_clearFlags": 7,

@@ -1,6 +1,6 @@
 import { Camera, EffectAsset, Material, MeshRenderer, Node, Vec4, resources } from 'cc';
 
-const SKIP = /^(sky|Hud|Canvas|LetterboxCam)$/i;
+const SKIP = /^(sky|Hud|Canvas|LetterboxCam|car_player)$/i;
 const GLASS = /glass|car00b/i;
 
 export class WorldBend {
@@ -35,11 +35,11 @@ export class WorldBend {
     for (let i = 0; i < list.length; i++) this.patch(list[i]);
   }
 
-  sync(): void {
+  sync(origin?: { x: number; y: number; z: number }): void {
     if (!this.enabled) return;
-    const cam = this.camera?.node;
-    if (!cam?.isValid || this.mats.length === 0) return;
-    const p = cam.worldPosition;
+    if (this.mats.length === 0) return;
+    const p = origin ?? this.camera?.node?.worldPosition;
+    if (!p) return;
     this.params.set(p.x, p.y, p.z, Math.max(this.radius, 8));
     for (let i = this.mats.length - 1; i >= 0; i--) {
       const mat = this.mats[i];

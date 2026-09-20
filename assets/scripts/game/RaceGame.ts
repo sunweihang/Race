@@ -155,8 +155,6 @@ export class RaceGame {
   private camHold = 0;
   private camPos = new Vec3();
   private lookPos = new Vec3();
-  private lookSmoothed = new Vec3();
-  private camInited = false;
   private pickupSpin = 0;
   private glassMat: Material | null = null;
   private worldBend = new WorldBend();
@@ -192,7 +190,7 @@ export class RaceGame {
     this.scene.addChild(this.actors);
     this.mainCam = this.scene.getChildByName('Main Camera')?.getComponent(Camera) ?? null;
     if (this.mainCam) {
-      this.mainCam.clearColor = new Color(185, 216, 239, 255);
+      this.mainCam.clearColor = new Color(90, 200, 255, 255);
       this.mainCam.far = 650;
     }
     this.worldBend.attach(this.mainCam);
@@ -352,7 +350,12 @@ export class RaceGame {
       mr.shadowCastingMode = MeshRenderer.ShadowCastingMode.OFF;
       mr.receiveShadow = false;
       const src = mr.getSharedMaterial(0) ?? mr.material;
-      const tex = this.skyTex ?? src?.getProperty('mainTexture') ?? src?.getProperty('albedoMap');
+      const tex =
+        this.skyTex ??
+        src?.getProperty('mainTexture') ??
+        src?.getProperty('albedoMap') ??
+        src?.getProperty('mainTex') ??
+        src?.getProperty('emissiveMap');
       const mat = new Material();
       mat.initialize({
         effectName: 'builtin-unlit',
@@ -368,6 +371,7 @@ export class RaceGame {
   private spawn(name: string): Node {
     const prefab = this.templates.get(name);
     const node = prefab ? instantiate(prefab) : this.makeFallback(name);
+    node.name = name;
     if (name.startsWith('car_')) this.sealCar(node);
     this.actors.addChild(node);
     return node;
@@ -762,14 +766,15 @@ export class RaceGame {
   }
 
   tick(dt: number): void {
+    dt = Math.min(Math.max(dt, 0), 0.05);
     if (!this.player) {
-      this.updateCamera(0.08);
+      this.updateCamera();
       this.syncBend();
       return;
     }
     if (this.mode !== 'play') {
       this.advanceView(dt);
-      this.updateCamera(0.08);
+      this.updateCamera();
       this.syncBend();
       return;
     }
@@ -862,8 +867,7 @@ export class RaceGame {
     this.hud?.setWarn(this.hazard && this.hazard.lane === this.lane ? '救护车占道，立刻换道' : '');
     this.hud?.setStats(this.dist, this.coins, this.lives);
     this.advanceView(dt);
-    const camBusy = !!(this.playerTurn || this.camHold > 0 || this.viewT < 1);
-    this.updateCamera(camBusy ? 0.28 : 0.14);
+    this.updateCamera();
     this.syncBend();
     this.recycle();
   }
@@ -871,7 +875,7 @@ export class RaceGame {
   private syncBend(): void {
     this.worldBend.capture(this.world);
     this.worldBend.capture(this.actors);
-    this.worldBend.sync();
+    this.worldBend.sync(this.player ? this.playerAt : undefined);
   }
 
   private spawnTraffic(): void {
@@ -975,7 +979,7 @@ export class RaceGame {
     }
   }
 
-  private updateCamera(lerp: number): void {
+  private updateCamera(): void {
     if (!this.mainCam) return;
     const watchingTurn = !!(this.playerTurn || this.camHold > 0);
     const car = this.player
@@ -988,21 +992,8 @@ export class RaceGame {
     const ahead = watchingTurn ? 0 : 2 + 8 * (this.viewT < 1 ? this.viewT : 1);
     this.lookPos.set(car.x + fx * ahead, 1.2, car.z + fz * ahead);
     const n = this.mainCam.node;
-    if (!this.camInited) {
-      n.setPosition(this.camPos);
-      this.lookSmoothed.set(this.lookPos.x, this.lookPos.y, this.lookPos.z);
-      this.camInited = true;
-    } else {
-      n.setPosition(
-        n.position.x + (this.camPos.x - n.position.x) * lerp,
-        n.position.y + (this.camPos.y - n.position.y) * lerp,
-        n.position.z + (this.camPos.z - n.position.z) * lerp,
-      );
-      this.lookSmoothed.x += (this.lookPos.x - this.lookSmoothed.x) * lerp;
-      this.lookSmoothed.y += (this.lookPos.y - this.lookSmoothed.y) * lerp;
-      this.lookSmoothed.z += (this.lookPos.z - this.lookSmoothed.z) * lerp;
-    }
-    n.lookAt(this.lookSmoothed);
-    this.sky?.setWorldPosition(n.position.x, 0, n.position.z);
+    n.setPosition(this.camPos);
+    n.lookAt(this.lookPos);
+    this.sky?.setWorldPosition(this.camPos.x, this.camPos.y - 105.5, this.camPos.z);
   }
 }
