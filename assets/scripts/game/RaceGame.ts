@@ -4,10 +4,13 @@ import {
   EventTouch,
   Input,
   KeyCode,
+  Material,
+  MeshRenderer,
   Node,
   Prefab,
   Scene,
   Vec3,
+  gfx,
   input,
   instantiate,
   resources,
@@ -17,16 +20,22 @@ import { WorldBend } from './WorldBend';
 
 const GRID = 62;
 const ROAD_W = 12;
-const LANE_W = 2.5;
+/** map_L0/L1 painted strips: lines at 0, ±2.98, ±5.96. */
+const LANE_W = 2.9817;
+const LANE_MIN = 0;
+const LANE_MAX = 3;
 const L1_LEN = 47.181;
 const TURN_ZONE = 28;
 const TURN_R = 8;
 const CAM_HOLD = 0.16;
 const CAM_SWING = 0.62;
-const LANE_SLIDE = 0.48;
-const CAM_LANE_RATE = 6.5;
+const LANE_SLIDE = 0.16;
+const CAM_LANE_RATE = 16;
 const START_Z = -48;
 const MAX_LIVES = 5;
+/** Traffic must appear at the far road end, never mid-view. */
+const TRAFFIC_SPAWN_MIN = 96;
+const TRAFFIC_SPAWN_MAX = 112;
 const DIRS = [
   { x: 0, z: 1 },
   { x: 1, z: 0 },
@@ -41,10 +50,26 @@ type Actor = {
   node: Node;
   heading: number;
   lane: number;
+  roadLane: number;
   x: number;
   z: number;
   speed: number;
   kind?: string;
+};
+
+type Crash = {
+  node: Node;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  yaw: number;
+  spinYaw: number;
+  spinRoll: number;
+  t: number;
+  dur: number;
 };
 
 type Pickup = {
@@ -110,6 +135,12 @@ export class RaceGame {
   private tiles = new Map<string, Node>();
   private traffic: Actor[] = [];
   private pickups: Pickup[] = [];
+  private crashes: Crash[] = [];
+  private shake = 0;
+  private hitJolt = 0;
+  private hitStun = 0;
+  private hitSide = 1;
+  private hitFromRear = false;
   private player: Node | null = null;
   private robber: Node | null = null;
   private hazard: Actor | null = null;
@@ -120,11 +151,11 @@ export class RaceGame {
 
   private mode: 'boot' | 'play' | 'over' = 'boot';
   private heading = 0;
-  private lane = 2;
-  private shownLane = 2;
-  private laneFrom = 2;
+  private lane = 1;
+  private shownLane = 1;
+  private laneFrom = 1;
   private laneAnim = 1;
-  private camShownLane = 2;
+  private camShownLane = 1;
   private x = 0;
   private z = START_Z;
   private speed = 16;
@@ -135,7 +166,6 @@ export class RaceGame {
   private magnet = 0;
   private double = 0;
   private pendingTurn = 0;
-  private firstCross = true;
   private robberHeading = 0;
   private robberLane = 1;
   private robberX = 0;
@@ -156,6 +186,7 @@ export class RaceGame {
   private lookPos = new Vec3();
   private pickupSpin = 0;
   private worldBend = new WorldBend();
+  private solidMats = new Set<Material>();
 
   static create(scene: Scene): RaceGame {
     const g = new RaceGame(scene);
@@ -190,7 +221,7 @@ export class RaceGame {
     this.worldBend.attach(this.mainCam);
 
     const canvas = this.scene.getChildByName('Canvas');
-    if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun(), () => this.toggleBend());
+    if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun(), () => this.toggleBend(), (dir) => this.steer(dir));
 
     const names = ['map_L0', 'map_L1', ...BLOCKS, 'car_player', 'car_robber', ...CARS, 'sky', ...PICKUPS];
     await Promise.all(names.map((n) => this.loadPrefab(n)));
@@ -246,7 +277,29 @@ export class RaceGame {
   }
 
   private instWorld(name: string): Node | null {
-    return this.inst(name, this.world);
+    const n = this.inst(name, this.world);
+    if (n) this.solidifyMaps(n);
+    return n;
+  }
+
+  /** Street trees imported as BLEND (no depth write) stack in the wrong order. */
+  private solidifyMaps(root: Node): void {
+    const list = root.getComponentsInChildren(MeshRenderer);
+    for (let i = 0; i < list.length; i++) {
+      const mr = list[i];
+      const shared = mr.sharedMaterials || [];
+      const count = Math.max(shared.length, 1);
+      for (let s = 0; s < count; s++) {
+        const mat = shared[s] ?? mr.getSharedMaterial(s);
+        if (!mat || this.solidMats.has(mat)) continue;
+        this.solidMats.add(mat);
+        mat.overridePipelineStates({
+          rasterizerState: { cullMode: gfx.CullMode.BACK },
+          depthStencilState: { depthTest: true, depthWrite: true },
+          blendState: { targets: [{ blend: false }] },
+        });
+      }
+    }
   }
 
   private snapRoad(x: number, z: number, heading: number): { x: number; z: number } {
@@ -351,11 +404,11 @@ export class RaceGame {
   private resetRun(): void {
     this.mode = 'play';
     this.heading = 0;
-    this.lane = 2;
-    this.shownLane = 2;
-    this.laneFrom = 2;
+    this.lane = 1;
+    this.shownLane = 1;
+    this.laneFrom = 1;
     this.laneAnim = 1;
-    this.camShownLane = 2;
+    this.camShownLane = 1;
     this.x = 0;
     this.z = START_Z;
     this.speed = 16;
@@ -366,7 +419,6 @@ export class RaceGame {
     this.magnet = 0;
     this.double = 0;
     this.pendingTurn = 0;
-    this.firstCross = true;
     this.playerTurn = null;
     this.robberMotion = null;
     this.playerYaw = 0;
@@ -382,10 +434,16 @@ export class RaceGame {
     this.robberZ = START_Z + 22;
     this.robberTurn = 0;
     this.hazardT = 16;
+    this.shake = 0;
+    this.hitJolt = 0;
+    this.hitStun = 0;
+    this.hitFromRear = false;
     for (const t of this.traffic) t.node.destroy();
     this.traffic.length = 0;
     for (const p of this.pickups) p.node.destroy();
     this.pickups.length = 0;
+    for (const c of this.crashes) c.node.destroy();
+    this.crashes.length = 0;
     if (this.hazard) {
       this.hazard.node.destroy();
       this.hazard = null;
@@ -396,6 +454,11 @@ export class RaceGame {
     const start = this.pose(this.player, this.x, this.z, this.heading, this.lane);
     this.playerAt.set(start.x, 0, start.z);
     this.pose(this.robber, this.robberX, this.robberZ, this.robberHeading, this.robberLane);
+    this.placeTraffic(0, 98);
+    this.placeTraffic(1, 104);
+    this.placeTraffic(2, 100);
+    this.placeTraffic(3, 110);
+    this.placeTraffic(2, 96);
   }
 
   private endRun(reason: string): void {
@@ -410,20 +473,44 @@ export class RaceGame {
   };
 
   private onTouchEnd = (e: EventTouch): void => {
+    if (this.hud?.consumePad()) return;
     const loc = e.getUILocation();
     this.swipe(loc.x - this.touch0.x, loc.y - this.touch0.y);
   };
 
   private onKey = (e: EventKeyboard): void => {
-    if (e.keyCode === KeyCode.KEY_G) {
-      this.hud?.toggleGm();
+    if (e.keyCode === KeyCode.KEY_G) this.hud?.toggleGm();
+  };
+
+  private approachingTurn(): boolean {
+    if (this.playerTurn) return false;
+    const nx = this.nextIntersection(this.x, this.z, this.heading);
+    return nx.dist > 0 && nx.dist < TURN_ZONE;
+  }
+
+  private onLeftEdge(): boolean {
+    return this.lane >= LANE_MAX;
+  }
+
+  private onRightEdge(): boolean {
+    return this.lane <= LANE_MIN;
+  }
+
+  /** Left/right: change lane unless already on that outer lane near a junction. */
+  private steer(dir: number): void {
+    if (this.hud?.gmOpen) return;
+    if (this.mode !== 'play') return;
+    const left = dir < 0;
+    const onEdge = left ? this.onLeftEdge() : this.onRightEdge();
+    if (onEdge && this.approachingTurn()) {
+      this.pendingTurn = left ? 1 : -1;
       return;
     }
-    if (this.hud?.gmOpen) return;
-    if (e.keyCode === KeyCode.ARROW_LEFT || e.keyCode === KeyCode.KEY_A) this.swipe(-80, 0);
-    if (e.keyCode === KeyCode.ARROW_RIGHT || e.keyCode === KeyCode.KEY_D) this.swipe(80, 0);
-    if (e.keyCode === KeyCode.ARROW_UP || e.keyCode === KeyCode.KEY_W) this.swipe(0, 80);
-  };
+    if (left) this.setLane(Math.min(LANE_MAX, this.lane + 1));
+    else this.setLane(Math.max(LANE_MIN, this.lane - 1));
+    if (this.pendingTurn > 0 && !this.onLeftEdge()) this.pendingTurn = 0;
+    if (this.pendingTurn < 0 && !this.onRightEdge()) this.pendingTurn = 0;
+  }
 
   private toggleBend(): void {
     this.worldBend.setEnabled(!this.worldBend.enabled);
@@ -435,19 +522,13 @@ export class RaceGame {
     if (this.hud?.gmOpen) return;
     if (this.mode !== 'play') return;
     if (Math.abs(dx) < 24 && Math.abs(dy) < 24) return;
-    const turning = !!this.playerTurn;
-    const nx = this.nextIntersection(this.x, this.z, this.heading);
-    const inTurn = !turning && nx.dist > 0 && nx.dist < TURN_ZONE;
-    if (inTurn && Math.abs(dx) > Math.abs(dy) * 0.7) {
-      this.pendingTurn = dx < 0 ? 1 : -1;
-      return;
-    }
-    if (inTurn && dy > 30) {
+    const inTurn = this.approachingTurn();
+    if (inTurn && dy > 30 && Math.abs(dy) > Math.abs(dx)) {
       this.pendingTurn = 0;
       return;
     }
-    if (dx < 0) this.setLane(Math.min(3, this.lane + 1));
-    if (dx > 0) this.setLane(Math.max(0, this.lane - 1));
+    if (Math.abs(dx) < 24) return;
+    this.steer(dx < 0 ? -1 : 1);
   }
 
   private setLane(next: number): void {
@@ -460,7 +541,7 @@ export class RaceGame {
   private advanceLane(dt: number): void {
     if (this.laneAnim < 1) {
       this.laneAnim = Math.min(1, this.laneAnim + dt / LANE_SLIDE);
-      this.shownLane = this.laneFrom + (this.lane - this.laneFrom) * easeInOutCubic(this.laneAnim);
+      this.shownLane = this.laneFrom + (this.lane - this.laneFrom) * (1 - (1 - this.laneAnim) ** 3);
     } else {
       this.shownLane = this.lane;
     }
@@ -544,7 +625,11 @@ export class RaceGame {
     const z = isPlayer ? this.z : this.robberZ;
     const heading = isPlayer ? this.heading : this.robberHeading;
     const nx = this.nextIntersection(x, z, heading);
-    const turn = isPlayer ? (this.firstCross ? 0 : this.pendingTurn) : this.robberTurn;
+    let turn = isPlayer ? this.pendingTurn : this.robberTurn;
+    if (isPlayer) {
+      if (turn > 0 && !this.onLeftEdge()) turn = 0;
+      if (turn < 0 && !this.onRightEdge()) turn = 0;
+    }
 
     if (turn === 0) {
       if (nx.dist > 1.2 || nx.dist < -1.5) return;
@@ -552,7 +637,6 @@ export class RaceGame {
         this.x = nx.x;
         this.z = nx.z;
         this.pendingTurn = 0;
-        this.firstCross = false;
       } else {
         this.robberX = nx.x;
         this.robberZ = nx.z;
@@ -571,7 +655,6 @@ export class RaceGame {
       this.z = p.z;
       this.playerYaw = headingYaw(motion.fromH) + motion.dir * 90 * motion.t;
       this.pendingTurn = 0;
-      this.firstCross = false;
       this.viewFrom = headingYaw(motion.fromH);
       this.viewTo = headingYaw(motion.fromH);
       this.viewT = 1;
@@ -643,20 +726,95 @@ export class RaceGame {
     this.viewYaw = this.viewTo;
   }
 
-  private hitPlayer(from?: Actor): void {
-    if (this.invuln > 0) return;
-    this.lives -= 1;
-    this.invuln = 1.4;
-    if (from) {
-      from.node.destroy();
-      const i = this.traffic.indexOf(from);
-      if (i >= 0) this.traffic.splice(i, 1);
-      if (this.hazard === from) {
-        this.hazard = null;
-        this.hazardT = 12;
+  private sameLane(roadLane: number): boolean {
+    return roadLane === this.lane || Math.abs(roadLane - this.shownLane) < 0.62;
+  }
+
+  private oncomingOf(heading: number): boolean {
+    return ((heading - this.heading + 4) % 4) === 2;
+  }
+
+  private detachActor(from: Actor): void {
+    const i = this.traffic.indexOf(from);
+    if (i >= 0) this.traffic.splice(i, 1);
+    if (this.hazard === from) {
+      this.hazard = null;
+      this.hazardT = 12;
+    }
+  }
+
+  private launchCrash(from: Actor, rear: boolean): void {
+    const d = DIRS[this.heading];
+    const r = rightOf(this.heading);
+    const side = (from.roadLane ?? from.lane) >= this.shownLane ? 1 : -1;
+    const oncoming = this.oncomingOf(from.heading);
+    const kick = rear || oncoming ? 24 : 15;
+    const pos = from.node.position;
+    this.crashes.push({
+      node: from.node,
+      x: pos.x,
+      y: 0,
+      z: pos.z,
+      vx: r.x * side * kick + d.x * (oncoming ? -6 : 9),
+      vy: rear ? 12 : oncoming ? 9 : 6.5,
+      vz: r.z * side * kick + d.z * (oncoming ? -6 : 9),
+      yaw: headingYaw(from.heading),
+      spinYaw: side * (oncoming || rear ? 560 : 380),
+      spinRoll: side * (rear ? 240 : 160),
+      t: 0,
+      dur: rear ? 1.25 : 1.05,
+    });
+  }
+
+  private advanceCrashes(dt: number): void {
+    for (let i = this.crashes.length - 1; i >= 0; i--) {
+      const c = this.crashes[i];
+      c.t += dt;
+      c.vy -= 32 * dt;
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      c.z += c.vz * dt;
+      if (c.y < 0) {
+        c.y = 0;
+        c.vy *= -0.32;
+        c.vx *= 0.72;
+        c.vz *= 0.72;
+      }
+      const k = Math.min(1, c.t / c.dur);
+      if (c.node.isValid) {
+        c.node.setPosition(c.x, c.y, c.z);
+        c.node.setRotationFromEuler(c.spinRoll * k * 0.35, modelYaw(c.yaw + c.spinYaw * k), c.spinRoll * k);
+      }
+      if (c.t >= c.dur || !c.node.isValid) {
+        if (c.node.isValid) c.node.destroy();
+        this.crashes.splice(i, 1);
       }
     }
-    if (this.lives <= 0) this.endRun('被撞停了');
+  }
+
+  private advanceHitFeel(dt: number): void {
+    this.shake = Math.max(0, this.shake - dt);
+    this.hitJolt = Math.max(0, this.hitJolt - dt);
+    this.hitStun = Math.max(0, this.hitStun - dt);
+    this.hud?.tickFlash(dt);
+  }
+
+  private hitPlayer(from?: Actor): void {
+    const rear = from?.kind === 'hazard';
+    if (from) {
+      this.detachActor(from);
+      this.launchCrash(from, rear);
+    }
+    if (this.invuln > 0) return;
+    this.lives -= 1;
+    this.invuln = rear ? 1.7 : 1.4;
+    this.hitFromRear = rear;
+    this.hitSide = from && (from.roadLane ?? from.lane) >= this.shownLane ? 1 : -1;
+    this.hitJolt = rear ? 0.5 : 0.32;
+    this.hitStun = rear ? 0.38 : 0.16;
+    this.shake = rear ? 0.42 : 0.28;
+    this.hud?.flashHit(rear);
+    if (this.lives <= 0) this.endRun(rear ? '被撞飞了' : '被撞停了');
   }
 
   tick(dt: number): void {
@@ -667,6 +825,8 @@ export class RaceGame {
       return;
     }
     if (this.mode !== 'play') {
+      this.advanceCrashes(dt);
+      this.advanceHitFeel(dt);
       this.advanceView(dt);
       this.updateCamera();
       this.syncBend();
@@ -674,9 +834,10 @@ export class RaceGame {
     }
     this.speed = Math.min(28, 16 + this.dist * 0.01);
     this.advanceLane(dt);
+    const drive = this.hitStun > 0 ? this.speed * (this.hitFromRear ? 0.25 : 0.45) : this.speed;
     if (this.playerTurn) this.advanceTurn('player', dt);
     else {
-      this.move(this, dt, this.speed);
+      this.move(this, dt, drive);
       this.tryBeginTurn('player');
     }
     this.dist += this.speed * dt;
@@ -699,7 +860,7 @@ export class RaceGame {
     }
 
     this.ensureWorld();
-    if (Math.random() < 0.025) this.spawnTraffic();
+    if (Math.random() < 0.04) this.spawnTraffic();
     if (Math.random() < 0.04) this.spawnPickup();
     this.hazardT -= dt;
     this.pickupSpin += dt * 180;
@@ -708,11 +869,14 @@ export class RaceGame {
     const turnRoll = this.playerTurn ? -this.playerTurn.dir * 12 * Math.sin(Math.PI * this.playerTurn.t) : 0;
     const slide = this.lane - this.laneFrom;
     const laneRoll = this.laneAnim < 1 ? -slide * 8 * Math.sin(Math.PI * this.laneAnim) : 0;
-    const playerRoll = turnRoll + laneRoll;
+    const joltK = this.hitJolt > 0 ? Math.sin((1 - this.hitJolt / (this.hitFromRear ? 0.5 : 0.32)) * Math.PI) : 0;
+    const playerRoll = turnRoll + laneRoll + joltK * this.hitSide * (this.hitFromRear ? 24 : 11);
     const p = this.playerTurn
       ? this.poseCar(this.player, this.x, this.z, this.shownLane, this.playerYaw, playerRoll)
       : this.pose(this.player, this.x, this.z, this.heading, this.shownLane, playerRoll);
-    this.playerAt.set(p.x, 0, p.z);
+    const hop = joltK * (this.hitFromRear ? 1.6 : 0.55);
+    if (this.player) this.player.setPosition(p.x, hop, p.z);
+    this.playerAt.set(p.x, hop, p.z);
     const robberRoll = this.robberMotion ? -this.robberMotion.dir * 12 * Math.sin(Math.PI * this.robberMotion.t) : 0;
     if (this.robberMotion) {
       this.poseCar(this.robber, this.robberX, this.robberZ, this.robberLane, this.robberYaw, robberRoll);
@@ -720,13 +884,21 @@ export class RaceGame {
       this.pose(this.robber, this.robberX, this.robberZ, this.robberHeading, this.robberLane);
     }
 
+    this.advanceCrashes(dt);
+    this.advanceHitFeel(dt);
+
     for (let i = this.traffic.length - 1; i >= 0; i--) {
       const t = this.traffic[i];
       this.move(t, dt, t.speed);
       this.pose(t.node, t.x, t.z, t.heading, t.lane);
+      const d = DIRS[this.heading];
+      const r = rightOf(this.heading);
       const dx = t.node.position.x - p.x;
       const dz = t.node.position.z - p.z;
-      if (dx * dx + dz * dz < 2.4 && t.lane === this.lane) this.hitPlayer(t);
+      const along = dx * d.x + dz * d.z;
+      const side = dx * r.x + dz * r.z;
+      const alongHit = this.oncomingOf(t.heading) ? 3.4 : 2.1;
+      if (Math.abs(along) < alongHit && Math.abs(side) < 1.15 && this.sameLane(t.roadLane)) this.hitPlayer(t);
     }
     for (const pk of this.pickups) {
       if (pk.taken) continue;
@@ -744,7 +916,7 @@ export class RaceGame {
       this.pose(this.hazard.node, this.hazard.x, this.hazard.z, this.hazard.heading, this.hazard.lane);
       const hx = this.hazard.node.position.x - p.x;
       const hz = this.hazard.node.position.z - p.z;
-      if (hx * hx + hz * hz < 2.8 && this.hazard.lane === this.lane) this.hitPlayer(this.hazard);
+      if (hx * hx + hz * hz < 2.8 && this.sameLane(this.hazard.roadLane)) this.hitPlayer(this.hazard);
       const hd = DIRS[this.heading];
       const alongH = (this.hazard.x - this.x) * hd.x + (this.hazard.z - this.z) * hd.z;
       if (alongH > 28) {
@@ -758,11 +930,14 @@ export class RaceGame {
     if (this.playerTurn) {
       this.hud?.setHint(this.playerTurn.dir > 0 ? '← 转弯中' : '转弯中 →');
     } else if (nx.dist > 0 && nx.dist < TURN_ZONE) {
-      this.hud?.setHint(turnLabel(this.pendingTurn));
+      if (this.pendingTurn !== 0) this.hud?.setHint(turnLabel(this.pendingTurn));
+      else if (this.onLeftEdge()) this.hud?.setHint('← 边道可左转');
+      else if (this.onRightEdge()) this.hud?.setHint('边道可右转 →');
+      else this.hud?.setHint('变到边道才能转弯');
     } else {
       this.hud?.setHint('');
     }
-    this.hud?.setWarn(this.hazard && this.hazard.lane === this.lane ? '救护车占道，立刻换道' : '');
+    this.hud?.setWarn(this.hazard && this.sameLane(this.hazard.roadLane) ? '救护车占道，立刻换道' : '');
     this.hud?.setStats(this.dist, this.coins, this.lives);
     this.advanceView(dt);
     this.updateCamera();
@@ -776,25 +951,35 @@ export class RaceGame {
     this.worldBend.sync(this.player ? this.playerAt : undefined);
   }
 
-  private spawnTraffic(): void {
-    if (this.traffic.length > 10) return;
+  private placeTraffic(roadLane: number, along: number): Actor | null {
     const d = DIRS[this.heading];
-    const along = 30 + Math.random() * 50;
-    const lane = Math.floor(Math.random() * 4);
-    if (lane === this.lane && Math.random() < 0.55) return;
+    const oncoming = roadLane >= 2;
+    const heading = oncoming ? (this.heading + 2) % 4 : this.heading;
+    const lane = oncoming ? 3 - roadLane : roadLane;
     const name = CARS[Math.floor(Math.random() * CARS.length)];
     const node = this.spawn(name);
-    if (!node) return;
+    if (!node) return null;
+    const far = Math.max(along, TRAFFIC_SPAWN_MIN);
     const actor: Actor = {
       node,
-      heading: this.heading,
+      heading,
       lane,
-      x: this.x + d.x * along,
-      z: this.z + d.z * along,
-      speed: 10 + Math.random() * 4,
+      roadLane,
+      x: this.x + d.x * far,
+      z: this.z + d.z * far,
+      speed: oncoming ? 11 + Math.random() * 5 : 10 + Math.random() * 4,
     };
     this.traffic.push(actor);
     this.pose(node, actor.x, actor.z, actor.heading, actor.lane);
+    return actor;
+  }
+
+  private spawnTraffic(): void {
+    if (this.traffic.length > 12) return;
+    const roadLane = Math.floor(Math.random() * 4);
+    if (roadLane < 2 && roadLane === this.lane && Math.random() < 0.55) return;
+    const span = TRAFFIC_SPAWN_MAX - TRAFFIC_SPAWN_MIN;
+    this.placeTraffic(roadLane, TRAFFIC_SPAWN_MIN + Math.random() * span);
   }
 
   private spawnPickup(): void {
@@ -833,10 +1018,12 @@ export class RaceGame {
     const d = DIRS[this.heading];
     const node = this.spawn('car_g3');
     if (!node) return;
+    const lane = Math.floor(Math.random() * 2);
     this.hazard = {
       node,
       heading: this.heading,
-      lane: Math.floor(Math.random() * 4),
+      lane,
+      roadLane: lane,
       x: this.x - d.x * 18,
       z: this.z - d.z * 18,
       speed: this.speed + 8,
@@ -883,6 +1070,12 @@ export class RaceGame {
     const lookZ = car.z * 0.55 + camCar.z * 0.45;
     this.lookPos.set(lookX + fx * ahead, 1.2, lookZ + fz * ahead);
     const n = this.mainCam.node;
+    if (this.shake > 0) {
+      const mag = this.shake * this.shake * (this.hitFromRear ? 1.6 : 1);
+      this.camPos.x += (Math.random() - 0.5) * mag * 1.1;
+      this.camPos.y += (Math.random() - 0.5) * mag * 0.55;
+      this.camPos.z += (Math.random() - 0.5) * mag * 1.1;
+    }
     n.setPosition(this.camPos);
     n.lookAt(this.lookPos);
     this.sky?.setWorldPosition(this.camPos.x, this.camPos.y - 105.5, this.camPos.z);

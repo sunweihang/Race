@@ -1,6 +1,7 @@
 import {
   Button,
   Color,
+  EventTouch,
   Graphics,
   Label,
   Layers,
@@ -44,8 +45,16 @@ export class RaceHud {
   private bendBtn: Node;
   private bendLabel: Label;
   private bendGfx: Graphics;
+  private flashNode: Node;
+  private flashGfx: Graphics;
+  private flashT = 0;
+  private flashDur = 0.28;
+  private flashRear = false;
+  private leftPad: Node;
+  private rightPad: Node;
+  private padLock = false;
 
-  constructor(canvas: Node, onPlay: () => void, onToggleBend: () => void) {
+  constructor(canvas: Node, onPlay: () => void, onToggleBend: () => void, onLane: (dir: number) => void) {
     this.root = new Node('Hud');
     ui(this.root);
     canvas.addChild(this.root);
@@ -69,6 +78,17 @@ export class RaceHud {
     this.hint.node.setPosition(0, 560, 0);
     this.warn = label(this.root, 'Warn', 28, new Color(255, 224, 138, 255));
     this.warn.node.setPosition(0, -720, 0);
+
+    this.flashNode = new Node('HitFlash');
+    ui(this.flashNode);
+    this.root.addChild(this.flashNode);
+    this.flashNode.addComponent(UITransform).setContentSize(DESIGN_W, DESIGN_H);
+    this.flashGfx = this.flashNode.addComponent(Graphics);
+    this.flashNode.active = false;
+
+    this.leftPad = this.makePad(this.root, 'LaneLeft', true, () => onLane(-1));
+    this.rightPad = this.makePad(this.root, 'LaneRight', false, () => onLane(1));
+    this.setPadsVisible(false);
 
     this.cover = new Node('Cover');
     ui(this.cover);
@@ -129,10 +149,11 @@ export class RaceHud {
     this.setBendOn(false);
     this.gm.active = false;
 
-    this.showCover('试试赛车', '左右滑：换道 / 路口转弯\n吃金币、躲车', '开始追捕');
+    this.showCover('试试赛车', '中间车道只换道\n变到左右边道，路口再转弯', '开始追捕');
     this.setStats(0, 0, 3);
     this.setHint('');
     this.setWarn('');
+    this.layout();
   }
 
   get gmOpen(): boolean {
@@ -156,6 +177,50 @@ export class RaceHud {
     const vis = portraitVisibleSize();
     this.root.getComponent(UITransform)?.setContentSize(vis.width, vis.height);
     this.root.getComponent(Widget)?.updateAlignment();
+    const x = vis.width * 0.5 - 150;
+    const y = -vis.height * 0.5 + 240;
+    this.leftPad.setPosition(-x, y, 0);
+    this.rightPad.setPosition(x, y, 0);
+  }
+
+  consumePad(): boolean {
+    if (!this.padLock) return false;
+    this.padLock = false;
+    return true;
+  }
+
+  private setPadsVisible(on: boolean): void {
+    this.leftPad.active = on;
+    this.rightPad.active = on;
+  }
+
+  private makePad(parent: Node, name: string, left: boolean, onTap: () => void): Node {
+    const n = new Node(name);
+    ui(n);
+    parent.addChild(n);
+    n.addComponent(UITransform).setContentSize(200, 200);
+    const g = n.addComponent(Graphics);
+    g.fillColor = new Color(16, 20, 32, 160);
+    g.circle(0, 0, 86);
+    g.fill();
+    g.strokeColor = new Color(244, 239, 228, 230);
+    g.lineWidth = 7;
+    g.circle(0, 0, 86);
+    g.stroke();
+    g.lineWidth = 12;
+    g.strokeColor = new Color(255, 255, 255, 255);
+    const s = left ? 1 : -1;
+    g.moveTo(20 * s, 38);
+    g.lineTo(-24 * s, 0);
+    g.lineTo(20 * s, -38);
+    g.stroke();
+    n.addComponent(Button);
+    n.on(Node.EventType.TOUCH_START, (e: EventTouch) => {
+      e.propagationStopped = true;
+      this.padLock = true;
+      onTap();
+    }, this);
+    return n;
   }
 
   setStats(dist: number, coins: number, lives: number): void {
@@ -175,8 +240,34 @@ export class RaceHud {
     this.warn.node.active = !!text;
   }
 
+  flashHit(rear = false): void {
+    this.flashRear = rear;
+    this.flashDur = rear ? 0.4 : 0.26;
+    this.flashT = this.flashDur;
+    this.drawFlash(1);
+  }
+
+  tickFlash(dt: number): void {
+    if (this.flashT <= 0) return;
+    this.flashT = Math.max(0, this.flashT - dt);
+    this.drawFlash(this.flashT / this.flashDur);
+  }
+
+  private drawFlash(k: number): void {
+    const a = Math.floor((this.flashRear ? 150 : 110) * k);
+    this.flashNode.active = a > 4;
+    if (!this.flashNode.active) return;
+    this.flashGfx.clear();
+    this.flashGfx.fillColor = this.flashRear
+      ? new Color(255, 70, 48, a)
+      : new Color(255, 168, 64, a);
+    this.flashGfx.rect(-DESIGN_W * 0.5, -DESIGN_H * 0.5, DESIGN_W, DESIGN_H);
+    this.flashGfx.fill();
+  }
+
   showCover(title: string, body: string, btn: string): void {
     this.cover.active = true;
+    this.setPadsVisible(false);
     this.coverTitle.string = title;
     this.coverBody.string = body;
     this.playBtn.node.getChildByName('PlayLabel')!.getComponent(Label)!.string = btn;
@@ -184,6 +275,8 @@ export class RaceHud {
 
   hideCover(): void {
     this.cover.active = false;
+    this.setPadsVisible(true);
+    this.layout();
   }
 
   dispose(): void {
