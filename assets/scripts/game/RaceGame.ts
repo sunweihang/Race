@@ -28,14 +28,16 @@ const L1_LEN = 47.181;
 const TURN_ZONE = 28;
 const TURN_R = 8;
 const LANE_SLIDE = 0.16;
-/** Chase cam looks at the car so it stays mid-screen; back/height leave room behind. */
-const CAM_BACK = 19;
-const CAM_HEIGHT = 10.8;
-const CAM_LOOK_Y = 0.7;
-const CAM_FOV = 46;
+/** Chase cam: car in the lower third, horizon ~2/3 up, matching the boulevard ref. */
+const CAM_BACK = 16;
+const CAM_HEIGHT = 7.4;
+const CAM_LOOK_AHEAD = 24;
+const CAM_LOOK_Y = 1.5;
+const CAM_FOV = 48;
 const HAZARD_BEHIND = 10;
 const START_Z = -48;
 const MAX_LIVES = 5;
+const SIDE_RAM_COINS = 5;
 /** Traffic must appear at the far road end, never mid-view. */
 const TRAFFIC_SPAWN_MIN = 96;
 const TRAFFIC_SPAWN_MAX = 112;
@@ -764,6 +766,26 @@ export class RaceGame {
     this.hud?.tickFlash(dt);
   }
 
+  /** Side swipe while changing lanes, or clipping a car that is not in our committed lane. */
+  private isSideRam(from: Actor): boolean {
+    if (from.kind === 'hazard') return false;
+    if (this.laneAnim < 1) return true;
+    return from.roadLane !== this.lane;
+  }
+
+  private ramTraffic(from: Actor): void {
+    this.detachActor(from);
+    this.launchCrash(from, false);
+    this.coins += this.double > 0 ? SIDE_RAM_COINS * 2 : SIDE_RAM_COINS;
+    this.invuln = Math.max(this.invuln, 0.35);
+    this.hitFromRear = false;
+    this.hitSide = (from.roadLane ?? from.lane) >= this.shownLane ? 1 : -1;
+    this.hitJolt = 0.22;
+    this.hitStun = 0.08;
+    this.shake = 0.16;
+    this.hud?.flashRam();
+  }
+
   private hitPlayer(from?: Actor): void {
     const rear = from?.kind === 'hazard';
     if (from) {
@@ -863,7 +885,11 @@ export class RaceGame {
       const along = dx * d.x + dz * d.z;
       const side = dx * r.x + dz * r.z;
       const alongHit = this.oncomingOf(t.heading) ? 3.4 : 2.1;
-      if (Math.abs(along) < alongHit && Math.abs(side) < 1.15 && this.sameLane(t.roadLane)) this.hitPlayer(t);
+      const sideHit = this.laneAnim < 1 ? 1.85 : 1.15;
+      if (Math.abs(along) < alongHit && Math.abs(side) < sideHit && this.sameLane(t.roadLane)) {
+        if (this.isSideRam(t)) this.ramTraffic(t);
+        else this.hitPlayer(t);
+      }
     }
     for (const pk of this.pickups) {
       if (pk.taken) continue;
@@ -1026,7 +1052,11 @@ export class RaceGame {
     const fx = Math.sin(rad);
     const fz = Math.cos(rad);
     this.camPos.set(car.x - fx * CAM_BACK, CAM_HEIGHT + car.y * 0.25, car.z - fz * CAM_BACK);
-    this.lookPos.set(car.x, CAM_LOOK_Y + car.y, car.z);
+    this.lookPos.set(
+      car.x + fx * CAM_LOOK_AHEAD,
+      CAM_LOOK_Y + car.y,
+      car.z + fz * CAM_LOOK_AHEAD,
+    );
     const n = this.mainCam.node;
     if (this.shake > 0) {
       const mag = this.shake * this.shake * (this.hitFromRear ? 1.6 : 1);

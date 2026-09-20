@@ -5,7 +5,8 @@ const GLASS = /glass|car00b/i;
 
 export class WorldBend {
   enabled = false;
-  radius = 130;
+  /** Larger = flatter. 750 is a soft horizon wrap; mid-road stays almost level. */
+  radius = 750;
   private camera: Camera | null = null;
   private effect: EffectAsset | null = null;
   private mats: Material[] = [];

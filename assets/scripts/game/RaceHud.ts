@@ -49,7 +49,7 @@ export class RaceHud {
   private flashGfx: Graphics;
   private flashT = 0;
   private flashDur = 0.28;
-  private flashRear = false;
+  private flashKind: 'hit' | 'rear' | 'ram' = 'hit';
   private leftPad: Node;
   private rightPad: Node;
   private padLock = false;
@@ -241,8 +241,15 @@ export class RaceHud {
   }
 
   flashHit(rear = false): void {
-    this.flashRear = rear;
+    this.flashKind = rear ? 'rear' : 'hit';
     this.flashDur = rear ? 0.4 : 0.26;
+    this.flashT = this.flashDur;
+    this.drawFlash(1);
+  }
+
+  flashRam(): void {
+    this.flashKind = 'ram';
+    this.flashDur = 0.22;
     this.flashT = this.flashDur;
     this.drawFlash(1);
   }
@@ -254,13 +261,15 @@ export class RaceHud {
   }
 
   private drawFlash(k: number): void {
-    const a = Math.floor((this.flashRear ? 150 : 110) * k);
+    const a = Math.floor((this.flashKind === 'rear' ? 150 : this.flashKind === 'ram' ? 90 : 110) * k);
     this.flashNode.active = a > 4;
     if (!this.flashNode.active) return;
     this.flashGfx.clear();
-    this.flashGfx.fillColor = this.flashRear
+    this.flashGfx.fillColor = this.flashKind === 'rear'
       ? new Color(255, 70, 48, a)
-      : new Color(255, 168, 64, a);
+      : this.flashKind === 'ram'
+        ? new Color(240, 193, 75, a)
+        : new Color(255, 168, 64, a);
     this.flashGfx.rect(-DESIGN_W * 0.5, -DESIGN_H * 0.5, DESIGN_W, DESIGN_H);
     this.flashGfx.fill();
   }

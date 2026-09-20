@@ -11,7 +11,7 @@ CCEffect %{
         mainTexture:    { value: white, target: albedoMap }
         roughness:      { value: 0.8, target: pbrParams.y }
         metallic:       { value: 0.0, target: pbrParams.z }
-        bendParams:     { value: [0.0, 0.0, 0.0, 130.0] }
+        bendParams:     { value: [0.0, 0.0, 0.0, 750.0] }
   - name: glass
     passes:
     - vert: bend-vs
