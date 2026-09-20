@@ -1,23 +1,16 @@
 import {
   Camera,
-  Color,
   EventKeyboard,
   EventTouch,
   Input,
   KeyCode,
-  Material,
-  MeshRenderer,
   Node,
   Prefab,
   Scene,
-  Texture2D,
   Vec3,
-  gfx,
   input,
   instantiate,
-  primitives,
   resources,
-  utils,
 } from 'cc';
 import { RaceHud } from './RaceHud';
 import { WorldBend } from './WorldBend';
@@ -42,6 +35,7 @@ const DIRS = [
 ];
 const BLOCKS = ['map_MK1', 'map_MK2', 'map_MK3', 'map_MK4'];
 const CARS = ['car_yellow', 'car_g3', 'car_g4', 'car_blue'];
+const PICKUPS = ['coin', 'life', 'magnet', 'star', 'double'];
 
 type Actor = {
   node: Node;
@@ -121,7 +115,6 @@ export class RaceGame {
   private hazard: Actor | null = null;
   private mainCam: Camera | null = null;
   private sky: Node | null = null;
-  private skyTex: Texture2D | null = null;
   private disposed = false;
   private touch0 = { x: 0, y: 0 };
 
@@ -162,7 +155,6 @@ export class RaceGame {
   private camPos = new Vec3();
   private lookPos = new Vec3();
   private pickupSpin = 0;
-  private glassMat: Material | null = null;
   private worldBend = new WorldBend();
 
   static create(scene: Scene): RaceGame {
@@ -195,17 +187,13 @@ export class RaceGame {
     this.scene.addChild(this.world);
     this.scene.addChild(this.actors);
     this.mainCam = this.scene.getChildByName('Main Camera')?.getComponent(Camera) ?? null;
-    if (this.mainCam) {
-      this.mainCam.clearColor = new Color(90, 200, 255, 255);
-      this.mainCam.far = 650;
-    }
     this.worldBend.attach(this.mainCam);
 
     const canvas = this.scene.getChildByName('Canvas');
     if (canvas) this.hud = new RaceHud(canvas, () => this.resetRun(), () => this.toggleBend());
 
-    const names = ['map_L0', 'map_L1', ...BLOCKS, 'car_player', 'car_robber', ...CARS, 'sky'];
-    await Promise.all([...names.map((n) => this.loadPrefab(n)), this.loadSkyTexture()]);
+    const names = ['map_L0', 'map_L1', ...BLOCKS, 'car_player', 'car_robber', ...CARS, 'sky', ...PICKUPS];
+    await Promise.all(names.map((n) => this.loadPrefab(n)));
     if (this.disposed) return;
 
     this.attachSky();
@@ -228,166 +216,37 @@ export class RaceGame {
   }
 
   private loadPrefab(name: string): Promise<void> {
-    const paths = [`models/${name}/${name}`, `models/${name}`];
-    const tryAt = (i: number, resolve: () => void): void => {
-      if (i >= paths.length) {
-        console.warn(`[Race] missing prefab models/${name}`);
-        resolve();
-        return;
-      }
-      resources.load(paths[i], Prefab, (err, prefab) => {
-        if (!err && prefab) {
-          this.templates.set(name, prefab);
-          resolve();
-          return;
-        }
-        tryAt(i + 1, resolve);
-      });
-    };
-    return new Promise((resolve) => tryAt(0, resolve));
-  }
-
-  private loadSkyTexture(): Promise<void> {
     return new Promise((resolve) => {
-      resources.load('textures/sky/texture', Texture2D, (err, tex) => {
-        if (!err && tex) {
-          this.skyTex = tex;
-          resolve();
-          return;
-        }
-        resources.load('textures/sky', Texture2D, (err2, tex2) => {
-          if (!err2 && tex2) this.skyTex = tex2;
-          resolve();
-        });
+      resources.load(`prefabs/${name}`, Prefab, (err, prefab) => {
+        if (!err && prefab) this.templates.set(name, prefab);
+        else console.warn(`[Race] missing prefab prefabs/${name}`);
+        resolve();
       });
     });
   }
 
-  private tint(color: Color): Material {
-    const mat = new Material();
-    mat.initialize({ effectName: 'builtin-unlit' });
-    mat.setProperty('mainColor', color);
-    return mat;
-  }
-
-  private meshNode(name: string, geo: Parameters<typeof utils.MeshUtils.createMesh>[0], color: Color): Node {
-    const node = new Node(name);
-    const mr = node.addComponent(MeshRenderer);
-    mr.mesh = utils.MeshUtils.createMesh(geo);
-    mr.material = this.tint(color);
+  private inst(name: string, parent: Node): Node | null {
+    const prefab = this.templates.get(name);
+    if (!prefab) {
+      console.warn(`[Race] skip ${name}: prefab not loaded`);
+      return null;
+    }
+    const node = instantiate(prefab);
+    node.name = name;
+    parent.addChild(node);
     return node;
-  }
-
-  private makeRoadFallback(name: string, width: number, length: number): Node {
-    const root = new Node(name);
-    const slab = this.meshNode('slab', primitives.box({ width, height: 0.04, length }), new Color(198, 186, 168, 255));
-    slab.setPosition(0, -0.02, 0);
-    root.addChild(slab);
-    return root;
-  }
-
-  private makeFallback(name: string): Node {
-    if (name.startsWith('car_')) {
-      const colors: Record<string, Color> = {
-        car_player: new Color(220, 70, 70, 255),
-        car_robber: new Color(40, 40, 48, 255),
-        car_yellow: new Color(240, 193, 75, 255),
-        car_g3: new Color(80, 180, 90, 255),
-        car_g4: new Color(70, 160, 80, 255),
-        car_blue: new Color(70, 130, 220, 255),
-      };
-      return this.meshNode(name, primitives.box({ width: 1.5, height: 0.75, length: 3.2 }), colors[name] || Color.WHITE);
-    }
-    if (name.startsWith('map_MK')) {
-      const root = new Node(name);
-      const block = this.meshNode('block', primitives.box({ width: 46, height: 8, length: 46 }), new Color(92, 118, 86, 255));
-      block.setPosition(0, 4, 0);
-      root.addChild(block);
-      return root;
-    }
-    if (name === 'map_L1') {
-      return this.makeRoadFallback(name, ROAD_W, L1_LEN);
-    }
-    return this.makeRoadFallback(name, ROAD_W, ROAD_W);
-  }
-
-  private carGlass(): Material {
-    if (this.glassMat) return this.glassMat;
-    const mat = new Material();
-    mat.initialize({ effectName: 'builtin-unlit' });
-    mat.setProperty('mainColor', new Color(28, 34, 42, 255));
-    mat.overridePipelineStates({
-      rasterizerState: { cullMode: 0 },
-    });
-    this.glassMat = mat;
-    return mat;
-  }
-
-  private sealCar(node: Node): void {
-    const glass = this.carGlass();
-    for (const mr of node.getComponentsInChildren(MeshRenderer)) {
-      if (/^car00b/i.test(mr.node.name)) mr.material = glass;
-    }
   }
 
   private attachSky(): void {
-    const prefab = this.templates.get('sky');
-    this.sky = prefab ? instantiate(prefab) : this.makeSkyFallback();
-    this.sky.name = 'sky';
-    this.scene.addChild(this.sky);
-    this.dressSky(this.sky);
+    this.sky = this.inst('sky', this.scene);
   }
 
-  private makeSkyFallback(): Node {
-    const root = new Node('sky');
-    const dome = this.meshNode(
-      'dome',
-      primitives.cylinder({ radiusTop: 320, radiusBottom: 320, height: 211, radialSegments: 48 }),
-      Color.WHITE,
-    );
-    dome.setPosition(0, 105.5, 0);
-    root.addChild(dome);
-    return root;
+  private spawn(name: string): Node | null {
+    return this.inst(name, this.actors);
   }
 
-  private dressSky(root: Node): void {
-    const mrs = root.getComponentsInChildren(MeshRenderer);
-    for (const mr of mrs) {
-      mr.shadowCastingMode = MeshRenderer.ShadowCastingMode.OFF;
-      mr.receiveShadow = false;
-      const src = mr.getSharedMaterial(0) ?? mr.material;
-      const tex =
-        this.skyTex ??
-        src?.getProperty('mainTexture') ??
-        src?.getProperty('albedoMap') ??
-        src?.getProperty('mainTex') ??
-        src?.getProperty('emissiveMap');
-      const mat = new Material();
-      mat.initialize({
-        effectName: 'builtin-unlit',
-        defines: { USE_TEXTURE: !!tex },
-        states: { rasterizerState: { cullMode: gfx.CullMode.NONE } },
-      });
-      if (tex) mat.setProperty('mainTexture', tex);
-      mat.setProperty('mainColor', Color.WHITE);
-      mr.material = mat;
-    }
-  }
-
-  private spawn(name: string): Node {
-    const prefab = this.templates.get(name);
-    const node = prefab ? instantiate(prefab) : this.makeFallback(name);
-    node.name = name;
-    if (name.startsWith('car_')) this.sealCar(node);
-    this.actors.addChild(node);
-    return node;
-  }
-
-  private instWorld(name: string): Node {
-    const prefab = this.templates.get(name);
-    const node = prefab ? instantiate(prefab) : this.makeFallback(name);
-    this.world.addChild(node);
-    return node;
+  private instWorld(name: string): Node | null {
+    return this.inst(name, this.world);
   }
 
   private snapRoad(x: number, z: number, heading: number): { x: number; z: number } {
@@ -453,6 +312,7 @@ export class RaceGame {
     const k = `x:${i}:${j}`;
     if (this.tiles.has(k)) return;
     const n = this.instWorld('map_L0');
+    if (!n) return;
     n.setPosition(i * GRID, 0, j * GRID);
     this.tiles.set(k, n);
   }
@@ -461,6 +321,7 @@ export class RaceGame {
     const k = `v:${i}:${j}`;
     if (this.tiles.has(k)) return;
     const n = this.instWorld('map_L1');
+    if (!n) return;
     n.setPosition(i * GRID, 0, j * GRID + GRID / 2);
     n.setScale(1, 1, (GRID - ROAD_W) / L1_LEN);
     this.tiles.set(k, n);
@@ -470,6 +331,7 @@ export class RaceGame {
     const k = `h:${i}:${j}`;
     if (this.tiles.has(k)) return;
     const n = this.instWorld('map_L1');
+    if (!n) return;
     n.setPosition(i * GRID + GRID / 2, 0, j * GRID);
     n.setRotationFromEuler(0, 90, 0);
     n.setScale(1, 1, (GRID - ROAD_W) / L1_LEN);
@@ -480,6 +342,7 @@ export class RaceGame {
     const k = `b:${i}:${j}`;
     if (this.tiles.has(k)) return;
     const n = this.instWorld(BLOCKS[Math.floor(hash(i, j, 3) * 4)]);
+    if (!n) return;
     n.setPosition(i * GRID + GRID / 2, 0, j * GRID + GRID / 2);
     n.setRotationFromEuler(0, Math.floor(hash(i, j, 7) * 4) * 90, 0);
     this.tiles.set(k, n);
@@ -921,6 +784,7 @@ export class RaceGame {
     if (lane === this.lane && Math.random() < 0.55) return;
     const name = CARS[Math.floor(Math.random() * CARS.length)];
     const node = this.spawn(name);
+    if (!node) return;
     const actor: Actor = {
       node,
       heading: this.heading,
@@ -944,28 +808,14 @@ export class RaceGame {
     if (nx.dist > 0 && nx.dist < 8) return;
     const roll = Math.random();
     let kind = 'coin';
-    let color = new Color(240, 193, 75, 255);
-    if (roll > 0.93) {
-      kind = 'life';
-      color = new Color(232, 93, 76, 255);
-    } else if (roll > 0.88) {
-      kind = 'magnet';
-      color = new Color(110, 198, 255, 255);
-    } else if (roll > 0.83) {
-      kind = 'star';
-      color = new Color(255, 224, 138, 255);
-    } else if (roll > 0.78) {
-      kind = 'double';
-      color = new Color(192, 132, 252, 255);
-    }
-    const geo =
-      kind === 'coin'
-        ? primitives.cylinder({ radiusTop: 0.38, radiusBottom: 0.38, height: 0.1, radialSegments: 16 })
-        : primitives.box({ width: 0.7, height: 0.7, length: 0.7 });
-    const node = this.meshNode(kind, geo, color);
+    if (roll > 0.93) kind = 'life';
+    else if (roll > 0.88) kind = 'magnet';
+    else if (roll > 0.83) kind = 'star';
+    else if (roll > 0.78) kind = 'double';
+    const node = this.spawn(kind);
+    if (!node) return;
     const p = this.poseOnRoad(x, z, this.heading, lane);
     node.setPosition(p.x, 0.8, p.z);
-    this.actors.addChild(node);
     this.pickups.push({ node, kind, x: p.x, z: p.z, taken: false });
   }
 
@@ -982,6 +832,7 @@ export class RaceGame {
   private spawnHazard(): void {
     const d = DIRS[this.heading];
     const node = this.spawn('car_g3');
+    if (!node) return;
     this.hazard = {
       node,
       heading: this.heading,

@@ -80,14 +80,27 @@ export class WorldBend {
       mat.initialize({
         effectAsset: this.effect,
         technique: glass ? 1 : 0,
-        defines: { USE_TEXTURE: !!tex },
+        defines: { USE_ALBEDO_MAP: !!tex },
       });
       if (tex) mat.setProperty('mainTexture', tex);
       if (color) mat.setProperty('mainColor', color);
-      const tiling = src?.getProperty('tilingOffset');
-      if (tiling) mat.setProperty('tilingOffset', tiling);
+      this.copyProp(src, mat, 'tilingOffset');
+      this.copyProp(src, mat, 'albedoScale');
+      this.copyProp(src, mat, 'roughness');
+      this.copyProp(src, mat, 'metallic');
+      this.copyProp(src, mat, 'pbrParams');
       mr.setMaterial(mat, i);
       this.mats.push(mat);
+    }
+  }
+
+  private copyProp(src: Material | null, dest: Material, name: string): void {
+    if (!src) return;
+    try {
+      const value = src.getProperty(name);
+      if (value != null) dest.setProperty(name, value);
+    } catch {
+      /* original material may not expose this slot */
     }
   }
 

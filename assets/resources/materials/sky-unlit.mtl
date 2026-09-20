@@ -1,0 +1,45 @@
+{
+  "__type__": "cc.Material",
+  "_name": "sky-unlit",
+  "_objFlags": 0,
+  "__editorExtras__": {},
+  "_native": "",
+  "_effectAsset": {
+    "__uuid__": "a3cd009f-0ab0-420d-9278-b9fdab939bbc",
+    "__expectedType__": "cc.EffectAsset"
+  },
+  "_techIdx": 0,
+  "_defines": [
+    {
+      "USE_TEXTURE": true
+    }
+  ],
+  "_states": [
+    {
+      "rasterizerState": {
+        "cullMode": 0
+      },
+      "depthStencilState": {},
+      "blendState": {
+        "targets": [
+          {}
+        ]
+      }
+    }
+  ],
+  "_props": [
+    {
+      "mainTexture": {
+        "__uuid__": "e7b19c4a-2d58-4f01-8a3e-6c9d0b4f21a8@6c48a",
+        "__expectedType__": "cc.Texture2D"
+      },
+      "mainColor": {
+        "__type__": "cc.Color",
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 255
+      }
+    }
+  ]
+}
