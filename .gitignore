@@ -1,0 +1,17 @@
+# Cocos Creator Project
+/library/
+/temp/
+/local/
+/build/
+/profiles/
+/native/engine/android/**/*/assets
+
+node_modules/
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+/_web_scratch/
+/_shot_*.png
+*.log
+.DS_Store

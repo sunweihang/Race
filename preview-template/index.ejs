@@ -1,0 +1,72 @@
+<html>
+    <head>
+        <link rel="icon" href="./favicon.ico" />
+        <meta charset="utf-8" />
+        <title><%=title%></title>
+        <meta
+            name="viewport"
+            content="width=device-width,user-scalable=no,initial-scale=1,minimum-scale=1,maximum-scale=1,minimal-ui=true,viewport-fit=cover"
+        />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="screen-orientation" content="portrait" />
+        <meta name="full-screen" content="yes" />
+        <meta name="x5-fullscreen" content="true" />
+        <meta name="360-fullscreen" content="true" />
+        <link rel="stylesheet" type="text/css" href="./index.css" />
+        <style>
+            #splash { display: none !important; }
+            .content,
+            .contentWrap {
+                background-color: #000 !important;
+            }
+            #GameDiv {
+                position: relative !important;
+                flex: none !important;
+                width: var(--game-frame-width, min(100%, calc(100vh * 1080 / 1920))) !important;
+                height: var(--game-frame-height, 100%) !important;
+                max-width: 100% !important;
+                max-height: 100% !important;
+                margin: auto !important;
+                overflow: hidden !important;
+                background-color: #000 !important;
+            }
+            #Cocos3dGameContainer,
+            #GameCanvas {
+                width: 100% !important;
+                height: 100% !important;
+                background-color: #000 !important;
+            }
+            .toolbar { display: none !important; }
+            .content {
+                top: 0 !important;
+                height: 100% !important;
+            }
+        </style>
+    </head>
+    <body style="overflow: hidden; background-color: #000;">
+        <%- include(cocosToolBar, {config: config}) %>
+        <div id="content" class="content" style="overflow: hidden; background-color: #000;">
+            <div class="contentWrap">
+                <div id="GameDiv" class="wrapper" cc_exact_fit_screen="false">
+                    <div id="Cocos3dGameContainer">
+                        <canvas id="GameCanvas" tabindex="-1" style="background-color: #000;"></canvas>
+                    </div>
+                    <div id="splash">
+                        <div class="progress-bar stripes"><span></span></div>
+                    </div>
+                    <div id="bulletin">
+                        <div id="sceneIsEmpty" class="inner"><%=tip_sceneIsEmpty%></div>
+                    </div>
+                    <div class="error" id="error">
+                        <div class="title">Error <i>(Please open the console to see detailed errors)</i></div>
+                        <div class="error-main"></div>
+                        <div class="error-stack"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <%- include(cocosTemplate, {}) %>
+        <script src="./game-frame.js"></script>
+    </body>
+</html>
