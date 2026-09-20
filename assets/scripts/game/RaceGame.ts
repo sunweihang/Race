@@ -27,10 +27,13 @@ const LANE_MAX = 3;
 const L1_LEN = 47.181;
 const TURN_ZONE = 28;
 const TURN_R = 8;
-const CAM_HOLD = 0.16;
-const CAM_SWING = 0.62;
 const LANE_SLIDE = 0.16;
-const CAM_LANE_RATE = 16;
+/** Chase cam looks at the car so it stays mid-screen; back/height leave room behind. */
+const CAM_BACK = 19;
+const CAM_HEIGHT = 10.8;
+const CAM_LOOK_Y = 0.7;
+const CAM_FOV = 46;
+const HAZARD_BEHIND = 10;
 const START_Z = -48;
 const MAX_LIVES = 5;
 /** Traffic must appear at the far road end, never mid-view. */
@@ -122,10 +125,6 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
-
 export class RaceGame {
   private scene: Scene;
   private world = new Node('World');
@@ -155,7 +154,6 @@ export class RaceGame {
   private shownLane = 1;
   private laneFrom = 1;
   private laneAnim = 1;
-  private camShownLane = 1;
   private x = 0;
   private z = START_Z;
   private speed = 16;
@@ -178,10 +176,6 @@ export class RaceGame {
   private robberYaw = 0;
   private playerAt = new Vec3();
   private viewYaw = 0;
-  private viewFrom = 0;
-  private viewTo = 0;
-  private viewT = 1;
-  private camHold = 0;
   private camPos = new Vec3();
   private lookPos = new Vec3();
   private pickupSpin = 0;
@@ -218,6 +212,7 @@ export class RaceGame {
     this.scene.addChild(this.world);
     this.scene.addChild(this.actors);
     this.mainCam = this.scene.getChildByName('Main Camera')?.getComponent(Camera) ?? null;
+    if (this.mainCam) this.mainCam.fov = CAM_FOV;
     this.worldBend.attach(this.mainCam);
 
     const canvas = this.scene.getChildByName('Canvas');
@@ -236,8 +231,6 @@ export class RaceGame {
     this.playerYaw = headingYaw(this.heading);
     this.robberYaw = headingYaw(this.robberHeading);
     this.viewYaw = this.playerYaw;
-    this.viewFrom = this.playerYaw;
-    this.viewTo = this.playerYaw;
     this.pose(this.robber, this.robberX, this.robberZ, this.robberHeading, this.robberLane);
     this.hud?.setStats(0, 0, 3);
 
@@ -408,7 +401,6 @@ export class RaceGame {
     this.shownLane = 1;
     this.laneFrom = 1;
     this.laneAnim = 1;
-    this.camShownLane = 1;
     this.x = 0;
     this.z = START_Z;
     this.speed = 16;
@@ -424,10 +416,6 @@ export class RaceGame {
     this.playerYaw = 0;
     this.robberYaw = 0;
     this.viewYaw = 0;
-    this.viewFrom = 0;
-    this.viewTo = 0;
-    this.viewT = 1;
-    this.camHold = 0;
     this.robberHeading = 0;
     this.robberLane = 1;
     this.robberX = 0;
@@ -545,8 +533,6 @@ export class RaceGame {
     } else {
       this.shownLane = this.lane;
     }
-    const follow = 1 - Math.exp(-dt * CAM_LANE_RATE);
-    this.camShownLane += (this.shownLane - this.camShownLane) * follow;
   }
 
   private move(target: { heading: number; x: number; z: number }, dt: number, speed: number): void {
@@ -655,10 +641,6 @@ export class RaceGame {
       this.z = p.z;
       this.playerYaw = headingYaw(motion.fromH) + motion.dir * 90 * motion.t;
       this.pendingTurn = 0;
-      this.viewFrom = headingYaw(motion.fromH);
-      this.viewTo = headingYaw(motion.fromH);
-      this.viewT = 1;
-      this.camHold = 0;
     } else {
       this.robberMotion = motion;
       this.robberHeading = motion.toH;
@@ -676,10 +658,6 @@ export class RaceGame {
       this.heading = m.toH;
       this.playerYaw = headingYaw(m.toH);
       this.playerTurn = null;
-      this.viewFrom = headingYaw(m.fromH);
-      this.viewTo = headingYaw(m.toH);
-      this.viewT = 0;
-      this.camHold = CAM_HOLD;
     } else {
       this.robberX = p.x;
       this.robberZ = p.z;
@@ -709,21 +687,8 @@ export class RaceGame {
   }
 
   private advanceView(dt: number): void {
-    if (this.playerTurn) {
-      this.viewYaw = headingYaw(this.playerTurn.fromH);
-      return;
-    }
-    if (this.camHold > 0) {
-      this.camHold = Math.max(0, this.camHold - dt);
-      this.viewYaw = this.viewFrom;
-      return;
-    }
-    if (this.viewT < 1) {
-      this.viewT = Math.min(1, this.viewT + dt / CAM_SWING);
-      this.viewYaw = lerpAngle(this.viewFrom, this.viewTo, easeInOutCubic(this.viewT));
-      return;
-    }
-    this.viewYaw = this.viewTo;
+    const follow = 1 - Math.exp(-dt * 12);
+    this.viewYaw = lerpAngle(this.viewYaw, this.playerYaw, follow);
   }
 
   private sameLane(roadLane: number): boolean {
@@ -1024,9 +989,9 @@ export class RaceGame {
       heading: this.heading,
       lane,
       roadLane: lane,
-      x: this.x - d.x * 18,
-      z: this.z - d.z * 18,
-      speed: this.speed + 8,
+      x: this.x - d.x * HAZARD_BEHIND,
+      z: this.z - d.z * HAZARD_BEHIND,
+      speed: this.speed + 6,
       kind: 'hazard',
     };
     this.pose(node, this.hazard.x, this.hazard.z, this.hazard.heading, this.hazard.lane);
@@ -1054,21 +1019,14 @@ export class RaceGame {
 
   private updateCamera(): void {
     if (!this.mainCam) return;
-    const watchingTurn = !!(this.playerTurn || this.camHold > 0);
     const car = this.player
       ? this.playerAt
       : this.poseOnRoad(this.x, this.z, this.heading, this.shownLane);
-    const camCar = this.playerTurn
-      ? this.offsetPoint(this.x, this.z, this.camShownLane, this.playerYaw)
-      : this.poseOnRoad(this.x, this.z, this.heading, this.camShownLane);
     const rad = (this.viewYaw * Math.PI) / 180;
     const fx = Math.sin(rad);
     const fz = Math.cos(rad);
-    this.camPos.set(camCar.x - fx * 16, 8.4, camCar.z - fz * 16);
-    const ahead = watchingTurn ? 0 : 2 + 8 * (this.viewT < 1 ? this.viewT : 1);
-    const lookX = car.x * 0.55 + camCar.x * 0.45;
-    const lookZ = car.z * 0.55 + camCar.z * 0.45;
-    this.lookPos.set(lookX + fx * ahead, 1.2, lookZ + fz * ahead);
+    this.camPos.set(car.x - fx * CAM_BACK, CAM_HEIGHT + car.y * 0.25, car.z - fz * CAM_BACK);
+    this.lookPos.set(car.x, CAM_LOOK_Y + car.y, car.z);
     const n = this.mainCam.node;
     if (this.shake > 0) {
       const mag = this.shake * this.shake * (this.hitFromRear ? 1.6 : 1);

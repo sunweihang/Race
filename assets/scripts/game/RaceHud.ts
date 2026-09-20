@@ -177,7 +177,7 @@ export class RaceHud {
     const vis = portraitVisibleSize();
     this.root.getComponent(UITransform)?.setContentSize(vis.width, vis.height);
     this.root.getComponent(Widget)?.updateAlignment();
-    const x = vis.width * 0.5 - 150;
+    const x = Math.min(230, vis.width * 0.5 - 140);
     const y = -vis.height * 0.5 + 240;
     this.leftPad.setPosition(-x, y, 0);
     this.rightPad.setPosition(x, y, 0);
