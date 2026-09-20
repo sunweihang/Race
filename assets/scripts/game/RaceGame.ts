@@ -30,6 +30,8 @@ const TURN_ZONE = 28;
 const TURN_R = 8;
 const CAM_HOLD = 0.16;
 const CAM_SWING = 0.62;
+const LANE_SLIDE = 0.48;
+const CAM_LANE_RATE = 6.5;
 const START_Z = -48;
 const MAX_LIVES = 5;
 const DIRS = [
@@ -126,6 +128,10 @@ export class RaceGame {
   private mode: 'boot' | 'play' | 'over' = 'boot';
   private heading = 0;
   private lane = 2;
+  private shownLane = 2;
+  private laneFrom = 2;
+  private laneAnim = 1;
+  private camShownLane = 2;
   private x = 0;
   private z = START_Z;
   private speed = 16;
@@ -396,11 +402,11 @@ export class RaceGame {
     return { x: road.x + r.x * off, z: road.z + r.z * off };
   }
 
-  private pose(node: Node | null, x: number, z: number, heading: number, lane: number): { x: number; z: number } {
+  private pose(node: Node | null, x: number, z: number, heading: number, lane: number, roll = 0): { x: number; z: number } {
     const p = this.poseOnRoad(x, z, heading, lane);
     if (node) {
       node.setPosition(p.x, 0, p.z);
-      node.setRotationFromEuler(0, modelYaw(headingYaw(heading)), 0);
+      node.setRotationFromEuler(0, modelYaw(headingYaw(heading)), roll);
     }
     return p;
   }
@@ -483,6 +489,10 @@ export class RaceGame {
     this.mode = 'play';
     this.heading = 0;
     this.lane = 2;
+    this.shownLane = 2;
+    this.laneFrom = 2;
+    this.laneAnim = 1;
+    this.camShownLane = 2;
     this.x = 0;
     this.z = START_Z;
     this.speed = 16;
@@ -573,8 +583,26 @@ export class RaceGame {
       this.pendingTurn = 0;
       return;
     }
-    if (dx < 0) this.lane = Math.min(3, this.lane + 1);
-    if (dx > 0) this.lane = Math.max(0, this.lane - 1);
+    if (dx < 0) this.setLane(Math.min(3, this.lane + 1));
+    if (dx > 0) this.setLane(Math.max(0, this.lane - 1));
+  }
+
+  private setLane(next: number): void {
+    if (next === this.lane) return;
+    this.laneFrom = this.shownLane;
+    this.lane = next;
+    this.laneAnim = 0;
+  }
+
+  private advanceLane(dt: number): void {
+    if (this.laneAnim < 1) {
+      this.laneAnim = Math.min(1, this.laneAnim + dt / LANE_SLIDE);
+      this.shownLane = this.laneFrom + (this.lane - this.laneFrom) * easeInOutCubic(this.laneAnim);
+    } else {
+      this.shownLane = this.lane;
+    }
+    const follow = 1 - Math.exp(-dt * CAM_LANE_RATE);
+    this.camShownLane += (this.shownLane - this.camShownLane) * follow;
   }
 
   private move(target: { heading: number; x: number; z: number }, dt: number, speed: number): void {
@@ -631,16 +659,19 @@ export class RaceGame {
     };
   }
 
-  private poseCar(node: Node | null, x: number, z: number, lane: number, yaw: number, roll = 0): { x: number; z: number } {
+  private offsetPoint(x: number, z: number, lane: number, yaw: number): { x: number; z: number } {
     const rad = (yaw * Math.PI) / 180;
     const off = (lane - 1.5) * LANE_W;
-    const px = x + Math.cos(rad) * off;
-    const pz = z - Math.sin(rad) * off;
+    return { x: x + Math.cos(rad) * off, z: z - Math.sin(rad) * off };
+  }
+
+  private poseCar(node: Node | null, x: number, z: number, lane: number, yaw: number, roll = 0): { x: number; z: number } {
+    const p = this.offsetPoint(x, z, lane, yaw);
     if (node) {
-      node.setPosition(px, 0, pz);
+      node.setPosition(p.x, 0, p.z);
       node.setRotationFromEuler(0, modelYaw(yaw), roll);
     }
-    return { x: px, z: pz };
+    return p;
   }
 
   private tryBeginTurn(who: 'player' | 'robber'): void {
@@ -779,6 +810,7 @@ export class RaceGame {
       return;
     }
     this.speed = Math.min(28, 16 + this.dist * 0.01);
+    this.advanceLane(dt);
     if (this.playerTurn) this.advanceTurn('player', dt);
     else {
       this.move(this, dt, this.speed);
@@ -810,10 +842,13 @@ export class RaceGame {
     this.pickupSpin += dt * 180;
     if (!this.hazard && this.hazardT < 0) this.spawnHazard();
 
-    const playerRoll = this.playerTurn ? -this.playerTurn.dir * 12 * Math.sin(Math.PI * this.playerTurn.t) : 0;
+    const turnRoll = this.playerTurn ? -this.playerTurn.dir * 12 * Math.sin(Math.PI * this.playerTurn.t) : 0;
+    const slide = this.lane - this.laneFrom;
+    const laneRoll = this.laneAnim < 1 ? -slide * 8 * Math.sin(Math.PI * this.laneAnim) : 0;
+    const playerRoll = turnRoll + laneRoll;
     const p = this.playerTurn
-      ? this.poseCar(this.player, this.x, this.z, this.lane, this.playerYaw, playerRoll)
-      : this.pose(this.player, this.x, this.z, this.heading, this.lane);
+      ? this.poseCar(this.player, this.x, this.z, this.shownLane, this.playerYaw, playerRoll)
+      : this.pose(this.player, this.x, this.z, this.heading, this.shownLane, playerRoll);
     this.playerAt.set(p.x, 0, p.z);
     const robberRoll = this.robberMotion ? -this.robberMotion.dir * 12 * Math.sin(Math.PI * this.robberMotion.t) : 0;
     if (this.robberMotion) {
@@ -984,13 +1019,18 @@ export class RaceGame {
     const watchingTurn = !!(this.playerTurn || this.camHold > 0);
     const car = this.player
       ? this.playerAt
-      : this.poseOnRoad(this.x, this.z, this.heading, this.lane);
+      : this.poseOnRoad(this.x, this.z, this.heading, this.shownLane);
+    const camCar = this.playerTurn
+      ? this.offsetPoint(this.x, this.z, this.camShownLane, this.playerYaw)
+      : this.poseOnRoad(this.x, this.z, this.heading, this.camShownLane);
     const rad = (this.viewYaw * Math.PI) / 180;
     const fx = Math.sin(rad);
     const fz = Math.cos(rad);
-    this.camPos.set(car.x - fx * 16, 8.4, car.z - fz * 16);
+    this.camPos.set(camCar.x - fx * 16, 8.4, camCar.z - fz * 16);
     const ahead = watchingTurn ? 0 : 2 + 8 * (this.viewT < 1 ? this.viewT : 1);
-    this.lookPos.set(car.x + fx * ahead, 1.2, car.z + fz * ahead);
+    const lookX = car.x * 0.55 + camCar.x * 0.45;
+    const lookZ = car.z * 0.55 + camCar.z * 0.45;
+    this.lookPos.set(lookX + fx * ahead, 1.2, lookZ + fz * ahead);
     const n = this.mainCam.node;
     n.setPosition(this.camPos);
     n.lookAt(this.lookPos);
